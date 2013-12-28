@@ -3,7 +3,8 @@ import argparse
 import ctypes
 import hashlib
 import sys
-from base58 import encode as base58_encode
+
+import base58
 
 ################################################################################
 ################################################################################
@@ -138,7 +139,7 @@ def base58_check(src, version_byte=0):
     if DEBUG:
         print('src + checksum:', bytes2hex(s))
 
-    e = base58_encode(int.from_bytes(s, 'big'))
+    e = base58.encode(int.from_bytes(s, 'big'))
     if version_byte == 0:
         lz = 0
         while lz < len(src) and src[lz] == 0:
@@ -147,6 +148,34 @@ def base58_check(src, version_byte=0):
         return ('1' * lz) + e
     return e
 
+def decode_base58_private_key(src):
+    decoded = base58.decode(src)
+    try:
+        # version + private_key + checksum
+        decoded_bytes = decoded.to_bytes(37, 'big')
+
+        version_byte = decoded_bytes[0]
+        private_key = decoded_bytes[1:33]
+        compressed_byte = 0
+        checksum = decoded_bytes[33:]
+        src = bytes([version_byte]) + private_key
+
+    except OverflowError:
+        # version + private_key + compression + checksum
+        decoded_bytes = decoded.to_bytes(38, 'big')
+
+        version_byte = decoded_bytes[0]
+        private_key = decoded_bytes[1:33]
+        compressed_byte = decoded_bytes[33]
+        checksum = decoded_bytes[34:]
+        src = bytes([version_byte]) + private_key + bytes([compressed_byte])
+
+    s = hash256(src)
+    if s[0:4] != checksum:
+        raise Exception("invalid private key")
+
+    return version_byte, compressed_byte == 0x01, private_key
+    
 def parse_args():
     parser = argparse.ArgumentParser(description="Generate Bitcoin Private Keys and Addresses")
     parser.add_argument("-p", "--passphrase", default=None, help="Use PASSPHRASE as the seed to a hash, the result of the hash is used as the private key")
@@ -154,12 +183,21 @@ def parse_args():
     parser.add_argument("-c", "--compressed", default=False, action='store_true', help="Generate address using compressed private key")
     parser.add_argument("-a", "--address-only", metavar="STR", default=None, help="Hash160 STR and produce a Bitcoin address; no corresponding private key is generated")
     parser.add_argument("-H", "--hash-type", metavar="HASH", default='SHA256', help="For -p only, specify the hash type to use [scrypt, SHA256] (default: SHA-256)")
+    parser.add_argument("-k", "--private-key", metavar="KEY", default=None, help="Generate the public key and address from the given Bitcoin private key")
 
     args = parser.parse_args()
-    if args.passphrase is not None and args.address_only is not None:
-        raise Exception("you can not specify both -p and -a")
-    if args.address_only is not None and args.compressed:
-        raise Exception("you can not use -c with -a")
+
+    c = 0
+    if args.passphrase is not None: c += 1
+    if args.address_only is not None: c += 1
+    if args.private_key is not None: c += 1
+
+    if c > 1:
+        raise Exception("you can only specify one of -p, -a, or -k")
+
+    if (args.address_only is not None or args.private_key is not None) and args.compressed:
+        raise Exception("you can not use -c with -a or -k")
+
     return args
 
 def main():
@@ -177,6 +215,18 @@ def main():
         else:
             raise Exception("TODO")
         private_key = None
+    elif args.private_key is not None:
+        version_byte, compressed, private_key = decode_base58_private_key(args.private_key)
+        public_key = get_public_key(private_key)
+
+        if version_byte == 128:
+            args.testnet = False
+        elif version_byte == 239:
+            args.testnet = True
+        else:
+            raise Exception("invalid version byte in private key")
+
+        args.compressed = compressed
     else:
         public_key, private_key = gen_key_pair()
 
