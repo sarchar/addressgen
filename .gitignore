@@ -1,0 +1,11 @@
+syntax: glob
+*.swp
+*.swo
+*.swm
+*.swn
+*~
+*.bak
+*.orig
+__pycache__
+.hg
+.hgignore
