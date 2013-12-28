@@ -2,6 +2,7 @@
 import argparse
 import ctypes
 import hashlib
+import hmac
 import sys
 
 import base58
@@ -28,6 +29,12 @@ def hex2bytes(data):
 
 NID_secp160k1 = 708
 NID_secp256k1 = 714
+
+BIP32_MAINNET_PUBLIC  = bytes([0x04, 0x88, 0xb2, 0x21])
+BIP32_MAINNET_PRIVATE = bytes([0x04, 0x88, 0xad, 0xe4])
+
+BIP32_TESTNET_PUBLIC  = bytes([0x04, 0x35, 0x87, 0xcf])
+BIP32_TESTNET_PRIVATE = bytes([0x04, 0x35, 0x83, 0x94])
 
 def gen_key_pair(curve_name=NID_secp256k1):
     k = ssl_library.EC_KEY_new_by_curve_name(curve_name)
@@ -121,17 +128,20 @@ def is_public_key(public_key):
            ((public_key[0] == 0x04 and len(public_key) == 65) or \
             (public_key[0] in (0x02, 0x03) and len(public_key) == 3))
 
-def address_from_data(data, version_byte=0):
+def address_from_data(data, version_bytes=0):
     assert isinstance(data, bytes)
-    return base58_check(hash160(data), version_byte=version_byte)
+    return base58_check(hash160(data), version_bytes=version_bytes)
 
-def base58_check(src, version_byte=0):
-    src = bytes([version_byte]) + src
+def base58_check(src, version_bytes=0):
+    if isinstance(version_bytes, int):
+        version_bytes = bytes([version_bytes])
+
+    src = version_bytes + src
 
     r = hash256(src)
 
     if DEBUG:
-        print('SHA256(SHA256(0x{:02x} + src)):'.format(version_byte), bytes2hex(r))
+        print('SHA256(SHA256(0x{} + src)):'.format(bytes2hex(version_bytes)), bytes2hex(r))
 
     checksum = r[:4]
     s = src + checksum
@@ -140,7 +150,7 @@ def base58_check(src, version_byte=0):
         print('src + checksum:', bytes2hex(s))
 
     e = base58.encode(int.from_bytes(s, 'big'))
-    if version_byte == 0:
+    if version_bytes == bytes([0]):
         lz = 0
         while lz < len(src) and src[lz] == 0:
             lz += 1
@@ -175,7 +185,25 @@ def decode_base58_private_key(src):
         raise Exception("invalid private key")
 
     return version_byte, compressed_byte == 0x01, private_key
-    
+
+def bip32(private_key, testnet): #version_bytes=BIP32_MAINNET_PRIVATE):
+    m = hmac.new('Bitcoin seed'.encode('ascii'), digestmod=hashlib.sha512)
+    m.update(private_key)
+    s = m.digest()
+    il, ir = s[:32], s[32:]
+
+    # Generate a master private key:
+    # depth + parent_fingerprint + child_index + chain_code + 0 + private_key
+    r = bytes([0]) + bytes([0, 0, 0, 0]) + bytes([0, 0, 0, 0]) + ir + bytes([0]) + il
+    bip32_private_key = base58_check(r, version_bytes=BIP32_TESTNET_PRIVATE if testnet else BIP32_MAINNET_PRIVATE)
+
+    # Generate a master public key:
+    # depth + parent_fingerprint + child_index + chain_code + compressed_public_key
+    r = bytes([0]) + bytes([0, 0, 0, 0]) + bytes([0, 0, 0, 0]) + ir + compress(get_public_key(il))
+    bip32_public_key = base58_check(r, version_bytes=BIP32_TESTNET_PUBLIC if testnet else BIP32_MAINNET_PUBLIC)
+
+    return bip32_public_key, bip32_private_key
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Generate Bitcoin Private Keys and Addresses")
     parser.add_argument("-p", "--passphrase", default=None, help="Use PASSPHRASE as the seed to a hash, the result of the hash is used as the private key")
@@ -233,9 +261,12 @@ def main():
     if private_key is not None:
         print("ECDSA private key (random number / secret exponent) = {}".format(bytes2hex(private_key)))
         if args.compressed:
-            print("Bitcoin private key (Base58Check, compressed) = {}".format(base58_check(private_key + bytes([0x01]), version_byte=239 if args.testnet else 128)))
+            print("Bitcoin private key (Base58Check, compressed) = {}".format(base58_check(private_key + bytes([0x01]), version_bytes=239 if args.testnet else 128)))
         else:
-            print("Bitcoin private key (Base58Check, uncompressed) = {}".format(base58_check(private_key, version_byte=239 if args.testnet else 128)))
+            print("Bitcoin private key (Base58Check, uncompressed) = {}".format(base58_check(private_key, version_bytes=239 if args.testnet else 128)))
+
+        bip32_public_key, bip32_private_key = bip32(private_key, args.testnet)
+        print("Bitcoin extended private key = {}".format(bip32_private_key))
         print('------')
 
     if public_key is not None:
@@ -243,7 +274,7 @@ def main():
             compressed_public_key = compress(public_key)
             print("ECDSA public key (compressed) = {}".format(bytes2hex(compressed_public_key)))
 
-            addr = base58_check(hash160(compressed_public_key), version_byte=111 if args.testnet else 0)
+            addr = base58_check(hash160(compressed_public_key), version_bytes=111 if args.testnet else 0)
             print("Bitcoin Address (compressed): {} (length={})".format(addr, len(addr)))
         else:
             if args.address_only:
@@ -251,8 +282,11 @@ def main():
             else:
                 print("ECDSA public key (uncompressed) = {}".format(bytes2hex(public_key)))
 
-            addr = address_from_data(public_key, version_byte=111 if args.testnet else 0)
+            addr = address_from_data(public_key, version_bytes=111 if args.testnet else 0)
             print("Bitcoin Address (uncompressed): {} (length={})".format(addr, len(addr)))
+
+        if private_key is not None:
+            print("Bitcoin extended private key = {}".format(bip32_public_key))
 
 if __name__ == "__main__":
     main()
