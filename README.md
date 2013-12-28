@@ -22,6 +22,7 @@ Arguments
 
 ```
 usage: genbtcaddress.py [-h] [-p PASSPHRASE] [-t] [-c] [-a STR] [-H HASH]
+                        [-k KEY]
 
 Generate Bitcoin Private Keys and Addresses
 
@@ -38,6 +39,9 @@ optional arguments:
   -H HASH, --hash-type HASH
                         For -p only, specify the hash type to use [scrypt,
                         SHA256] (default: SHA-256)
+  -k KEY, --private-key KEY
+                        Generate the public key and address from the given
+                        Bitcoin private key
 ```
 
 Examples
