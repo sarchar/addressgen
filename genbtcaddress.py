@@ -11,6 +11,47 @@ import base58
 ################################################################################
 DEBUG = False
 
+COINS = {
+    'BTC' : {
+        'main': {
+            'prefix'        : 0,
+            'private_prefix': 0x80,
+            'bip32_public'  : bytes([0x04, 0x88, 0xb2, 0x1e]),
+            'bip32_private' : bytes([0x04, 0x88, 0xad, 0xe4]),
+        },
+        'test': {
+            'prefix'        : 0x6f,
+            'private_prefix': 0x6f+0x80,
+            'bip32_public'  : bytes([0x04, 0x35, 0x87, 0xcf]),
+            'bip32_private' : bytes([0x04, 0x35, 0x83, 0x94]),
+        }
+    },
+    'DOGE' : {
+        'main': {
+            'prefix'        : 0x1e,
+            'private_prefix': 0x1e+0x80,
+            'bip32_public'  : bytes([0x02, 0xfa, 0xca, 0xfd]),
+            'bip32_private' : bytes([0x02, 0xfa, 0xc3, 0x98]),
+        },
+        'test': {
+            'prefix'        : 0x71,
+            'private_prefix': 0x71+0x80,
+            'bip32_public'  : bytes([0x04, 0x32, 0xa9, 0xa8]),
+            'bip32_private' : bytes([0x04, 0x32, 0xa2, 0x43]),
+        }
+    },
+    'LTC' : {
+        'main': {
+            'prefix'        : 0x30,
+            'private_prefix': 0x30+0x80,
+        },
+        'test': {
+            'prefix'        : 0x6f,
+            'prefix'        : 0x6f+0x80,
+        }
+    }
+}
+
 ################################################################################
 ################################################################################
 try:
@@ -30,11 +71,8 @@ def hex2bytes(data):
 NID_secp160k1 = 708
 NID_secp256k1 = 714
 
-BIP32_MAINNET_PUBLIC  = bytes([0x04, 0x88, 0xb2, 0x1e])
-BIP32_MAINNET_PRIVATE = bytes([0x04, 0x88, 0xad, 0xe4])
-
-BIP32_TESTNET_PUBLIC  = bytes([0x04, 0x35, 0x87, 0xcf])
-BIP32_TESTNET_PRIVATE = bytes([0x04, 0x35, 0x83, 0x94])
+BIP32_PRIVATE_KEY_BYTES = set([COINS[coin_name][network]['bip32_private'] for coin_name in COINS.keys() for network in ('main', 'test') if 'bip32_private' in COINS[coin_name][network]])
+BIP32_PUBLIC_KEY_BYTES = set([COINS[coin_name][network]['bip32_public'] for coin_name in COINS.keys() for network in ('main', 'test') if 'bip32_public' in COINS[coin_name][network]])
 
 def gen_key_pair(curve_name=NID_secp256k1):
     k = ssl_library.EC_KEY_new_by_curve_name(curve_name)
@@ -189,7 +227,7 @@ def decode_base58_private_key(src):
 
     return version_byte, compressed_byte == 0x01, private_key
 
-def bip32(private_key, testnet):
+def bip32(private_key, coin):
     m = hmac.new('Bitcoin seed'.encode('ascii'), digestmod=hashlib.sha512)
     m.update(private_key)
     s = m.digest()
@@ -198,12 +236,12 @@ def bip32(private_key, testnet):
     # Generate a master private key:
     # depth + parent_fingerprint + child_index + chain_code + 0 + private_key
     r = bytes([0]) + bytes([0, 0, 0, 0]) + bytes([0, 0, 0, 0]) + ir + bytes([0]) + il
-    bip32_private_key = base58_check(r, version_bytes=BIP32_TESTNET_PRIVATE if testnet else BIP32_MAINNET_PRIVATE)
+    bip32_private_key = base58_check(r, version_bytes=coin['bip32_private'])
 
     # Generate a master public key:
     # depth + parent_fingerprint + child_index + chain_code + compressed_public_key
     r = bytes([0]) + bytes([0, 0, 0, 0]) + bytes([0, 0, 0, 0]) + ir + compress(get_public_key(il))
-    bip32_public_key = base58_check(r, version_bytes=BIP32_TESTNET_PUBLIC if testnet else BIP32_MAINNET_PUBLIC)
+    bip32_public_key = base58_check(r, version_bytes=coin['bip32_public'])
 
     return bip32_public_key, bip32_private_key
 
@@ -218,7 +256,7 @@ def bip32_get_public_key(bip32_private_key):
     if c[0:4] != decoded_bytes[78:]:
         raise Exception("invalid bip32 key")
 
-    if decoded_bytes[0:4] not in (BIP32_MAINNET_PRIVATE, BIP32_TESTNET_PRIVATE):
+    if decoded_bytes[0:4] not in BIP32_PRIVATE_KEY_BYTES:
         raise Exception("invalid bip32 key")
 
     if decoded_bytes[-4-33] != 0:
@@ -226,8 +264,18 @@ def bip32_get_public_key(bip32_private_key):
 
     private_key = decoded_bytes[-4-32:-4]
     r = decoded_bytes[4:-4-33] + compress(get_public_key(private_key))
-    testnet = (decoded_bytes[0:4] == BIP32_TESTNET_PRIVATE)
-    return base58_check(r, version_bytes=BIP32_TESTNET_PUBLIC if testnet else BIP32_MAINNET_PUBLIC)
+
+    coin = None
+    for coin_name in COINS:
+        for network in ('main', 'test'):
+            if 'bip32_private' in COINS[coin_name][network] and decoded_bytes[0:4] == COINS[coin_name][network]['bip32_private']:
+                coin = COINS[coin_name][network]
+                break
+
+    if coin is None:
+        raise Exception("unknown extended private key")
+
+    return base58_check(r, version_bytes=coin['bip32_public'])
 
 def bip32_extract_private_key(bip32_private_key):
     decoded = base58.decode(bip32_private_key)
@@ -240,7 +288,7 @@ def bip32_extract_private_key(bip32_private_key):
     if c[0:4] != decoded_bytes[78:]:
         raise Exception("invalid bip32 key")
 
-    if decoded_bytes[0:4] not in (BIP32_MAINNET_PRIVATE, BIP32_TESTNET_PRIVATE):
+    if decoded_bytes[0:4] not in BIP32_PRIVATE_KEY_BYTES:
         raise Exception("invalid bip32 key")
 
     if decoded_bytes[-4-33] != 0:
@@ -259,7 +307,7 @@ def bip32_extract_public_key(bip32_public_key):
     if c[0:4] != decoded_bytes[78:]:
         raise Exception("invalid bip32 key")
 
-    if decoded_bytes[0:4] not in (BIP32_MAINNET_PUBLIC, BIP32_TESTNET_PUBLIC):
+    if decoded_bytes[0:4] not in BIP32_PUBLIC_KEY_BYTES:
         raise Exception("invalid bip32 key")
 
     if decoded_bytes[-4-33] not in (0x02, 0x03):
@@ -276,6 +324,7 @@ def parse_args():
     parser.add_argument("-H", "--hash-type", metavar="HASH", default='SHA256', help="For -p only, specify the hash type to use [scrypt, SHA256] (default: SHA-256)")
     parser.add_argument("-k", "--private-key", metavar="KEY", default=None, help="Generate the public key and address from the given Bitcoin private key")
     parser.add_argument("-e", "--bip32-private-key", metavar="KEY", default=None, help="Generate the BIP32 public key and show information from the Bitcoin extended private key")
+    parser.add_argument("-n", "--coin", metavar="COIN", default="BTC", help="Generate an address for the given coin (BTC, DOGE, LTC) [default: BTC]")
 
     args = parser.parse_args()
 
@@ -291,10 +340,16 @@ def parse_args():
     if (args.address_only is not None or args.private_key is not None) and args.compressed:
         raise Exception("you can not use -c with -a or -k")
 
+    if args.coin.upper() not in COINS:
+        raise Exception("unknown coin {}".format(args.coin))
+
+    args.coin = COINS[args.coin.upper()]['test' if args.testnet else 'main']
+
     return args
 
 def main():
     args = parse_args()
+    coin = args.coin
 
     bip32_private_key = None
     bip32_public_key = None
@@ -313,13 +368,23 @@ def main():
         private_key = None
     elif args.private_key is not None:
         version_byte, compressed, private_key = decode_base58_private_key(args.private_key)
+        print(version_byte, '{:04x}'.format(version_byte))
         public_key = get_public_key(private_key)
 
-        if version_byte == 128:
-            args.testnet = False
-        elif version_byte == 239:
-            args.testnet = True
-        else:
+        coin = None
+        for coin_name in COINS.keys():
+            for network in ('main', 'test'):
+                if network not in COINS[coin_name]:
+                    continue
+                print(version_byte, coin_name, network, COINS[coin_name][network]['private_prefix'], version_byte == COINS[coin_name][network]['private_prefix'])
+                if version_byte == COINS[coin_name][network]['private_prefix']:
+                    args.testnet = (network == 'test')
+                    coin = COINS[coin_name][network]
+                    break
+            if coin is not None:
+                break
+
+        if coin is None:
             raise Exception("invalid version byte in private key")
 
         args.compressed = compressed
@@ -336,15 +401,18 @@ def main():
 
         print("ECDSA private key (random number / secret exponent)\n    {}".format(bytes2hex(private_key)))
         if args.compressed:
-            print("Bitcoin private key (Base58Check, compressed)\n    {}".format(base58_check(private_key + bytes([0x01]), version_bytes=239 if args.testnet else 128)))
+            print("Bitcoin private key (Base58Check, compressed)\n    {}".format(base58_check(private_key + bytes([0x01]), version_bytes=coin['private_prefix'])))
         else:
-            print("Bitcoin private key (Base58Check, uncompressed)\n    {}".format(base58_check(private_key, version_bytes=239 if args.testnet else 128)))
+            print("Bitcoin private key (Base58Check, uncompressed)\n    {}".format(base58_check(private_key, version_bytes=coin['private_prefix'])))
 
-        bip32_public_key, bip32_private_key = bip32(private_key, args.testnet)
+        if 'bip32_private' in coin:
+            bip32_public_key, bip32_private_key = bip32(private_key, coin)
 
     if bip32_private_key is not None:
         print("Bitcoin extended private key (Base58Check)\n    {}".format(bip32_private_key))
         print("    (embedded private key) -> {}".format(base58_check(bip32_extract_private_key(bip32_private_key) + bytes([0x01]), version_bytes=239 if args.testnet else 128)))
+
+    if public_key is not None or bip32_public_key is not None:
         print('------')
 
     if public_key is not None:
@@ -354,7 +422,7 @@ def main():
             compressed_public_key = compress(public_key)
             print("ECDSA public key (compressed)\n    {}".format(bytes2hex(compressed_public_key)))
 
-            addr = base58_check(hash160(compressed_public_key), version_bytes=111 if args.testnet else 0)
+            addr = base58_check(hash160(compressed_public_key), version_bytes=coin['prefix'])
             print("Bitcoin Address (compressed, length={}):\n    {}".format(len(addr), addr))
         else:
             if args.address_only:
@@ -362,13 +430,13 @@ def main():
             else:
                 print("ECDSA public key (uncompressed)\n    {}".format(bytes2hex(public_key)))
 
-            addr = address_from_data(public_key, version_bytes=111 if args.testnet else 0)
+            addr = address_from_data(public_key, version_bytes=coin['prefix'])
             print("Bitcoin Address (uncompressed, length={}):\n    {}".format(len(addr), addr))
 
     if bip32_public_key is not None:
         print("Bitcoin extended public key\n    {}".format(bip32_public_key))
         print("    (embedded public key) -> {}".format(bytes2hex(bip32_extract_public_key(bip32_public_key))))
-        print("    (bitcoin address) -> {}".format(base58_check(hash160(bip32_extract_public_key(bip32_public_key)), version_bytes=111 if args.testnet else 0)))
+        print("    (bitcoin address) -> {}".format(base58_check(hash160(bip32_extract_public_key(bip32_public_key)), version_bytes=coin['prefix'])))
 
 if __name__ == "__main__":
     main()
