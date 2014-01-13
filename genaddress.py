@@ -338,7 +338,7 @@ def parse_args():
     parser.add_argument("-H", "--hash-type", metavar="HASH", default='SHA256', help="For -p only, specify the hash type to use [scrypt, SHA256] (default: SHA-256)")
     parser.add_argument("-k", "--private-key", metavar="KEY", default=None, help="Generate the public key and address from the given Bitcoin private key")
     parser.add_argument("-e", "--bip32-private-key", metavar="KEY", default=None, help="Generate the BIP32 public key and show information from the Bitcoin extended private key")
-    parser.add_argument("-n", "--coin", metavar="COIN", default="BTC", help="Generate an address for the given coin (BTC, DOGE, LTC) [default: BTC]")
+    parser.add_argument("-n", "--coin", metavar="COIN", default="BTC", help="Generate an address for the given coin (BTC, DOGE, LTC, PPC) [default: BTC]")
 
     args = parser.parse_args()
 
