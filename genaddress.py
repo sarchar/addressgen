@@ -49,7 +49,9 @@ COINS = {
         },
         'test': {
             'prefix'        : 0x6f,
-            'prefix'        : 0x6f+0x80,
+            'private_prefix': 0x6f+0x80,
+            'bip32_public'  : bytes([0x04, 0x36, 0xf6, 0xe1]),
+            'bip32_private' : bytes([0x04, 0x36, 0xef, 0x7d]),
         }
     },
     'PPC' : {
@@ -59,7 +61,7 @@ COINS = {
         },
         'test': {
             'prefix'        : 0x6f,
-            'prefix'        : 0x6f+0x80,
+            'private_prefix': 0x6f+0x80,
         }
     }
 }
